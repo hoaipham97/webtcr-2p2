@@ -59,7 +59,9 @@ async def run_receiver():
             if f:
                 f.write(msg)
 
-    offer_sdp = read_sdp("Paste OFFER SDP:")
+    # offer_sdp = read_sdp("Paste OFFER SDP:")
+    with open("offer.txt", "r", encoding="utf-8") as f:
+        offer_sdp = f.read()
 
     await pc.setRemoteDescription(
         RTCSessionDescription(sdp=offer_sdp, type="offer")
