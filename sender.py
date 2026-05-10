@@ -11,7 +11,7 @@ from aiortc import (
     RTCIceServer,
 )
 
-SIGNALING_SERVER = "https://xxx.up.railway.app"
+SIGNALING_SERVER = "https://webtcr-2p2-production.up.railway.app"
 FILE_TO_SEND = "demo.json"
 
 config = RTCConfiguration(

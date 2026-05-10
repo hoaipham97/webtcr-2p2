@@ -3,3 +3,4 @@ aioice
 fastapi
 uvicorn
 requests
+websockets

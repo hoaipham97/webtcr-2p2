@@ -1,7 +1,7 @@
 import asyncio
+import json
 import os
-import time
-import requests
+import websockets
 
 from aiortc import (
     RTCPeerConnection,
@@ -11,7 +11,7 @@ from aiortc import (
     RTCIceServer,
 )
 
-SIGNALING_SERVER = "https://webtcr-2p2-production.up.railway.app"
+SIGNALING_WS = "wss://webtcr-2p2-production.up.railway.app/ws/receiver"
 
 config = RTCConfiguration(
     iceServers=[RTCIceServer(urls="stun:stun.l.google.com:19302")],
@@ -19,36 +19,13 @@ config = RTCConfiguration(
 )
 
 
-def post_sdp(path, sdp):
-    res = requests.post(
-        f"{SIGNALING_SERVER}{path}",
-        json={"sdp": sdp},
-        timeout=10,
-    )
-    res.raise_for_status()
-
-
-def wait_sdp(path):
-    while True:
-        res = requests.get(f"{SIGNALING_SERVER}{path}", timeout=10)
-        res.raise_for_status()
-
-        sdp = res.json().get("sdp")
-        if sdp:
-            return sdp
-
-        print(f"Waiting for {path}...")
-        time.sleep(2)
-
-
-async def run_receiver():
+async def main():
     pc = RTCPeerConnection(config)
     done = asyncio.Event()
 
     @pc.on("datachannel")
     def on_channel(channel):
         print("DataChannel received:", channel.label)
-
         f = None
 
         @channel.on("message")
@@ -58,7 +35,6 @@ async def run_receiver():
             if isinstance(msg, str) and msg.startswith("FILENAME:"):
                 original_name = msg.replace("FILENAME:", "", 1)
                 save_name = "receiver_" + os.path.basename(original_name)
-
                 f = open(save_name, "wb")
                 print("Saving as:", save_name)
                 return
@@ -66,7 +42,6 @@ async def run_receiver():
             if msg == b"END":
                 if f:
                     f.close()
-
                 print("Received!")
                 done.set()
                 return
@@ -74,24 +49,36 @@ async def run_receiver():
             if f:
                 f.write(msg)
 
-    print("Waiting for OFFER...")
-    offer_sdp = wait_sdp("/offer")
+    async with websockets.connect(SIGNALING_WS) as ws:
+        print("Receiver connected. Waiting for offer...")
 
-    await pc.setRemoteDescription(
-        RTCSessionDescription(sdp=offer_sdp, type="offer")
-    )
+        while True:
+            raw = await ws.recv()
+            data = json.loads(raw)
 
-    answer = await pc.createAnswer()
-    await pc.setLocalDescription(answer)
+            if data.get("type") == "offer":
+                await pc.setRemoteDescription(
+                    RTCSessionDescription(
+                        sdp=data["sdp"],
+                        type="offer",
+                    )
+                )
 
-    print("Posting ANSWER to signaling server...")
-    post_sdp("/answer", pc.localDescription.sdp)
+                answer = await pc.createAnswer()
+                await pc.setLocalDescription(answer)
 
-    print("Waiting for file...")
+                await ws.send(json.dumps({
+                    "type": "answer",
+                    "target": "sender",
+                    "sdp": pc.localDescription.sdp,
+                }))
 
-    await done.wait()
-    await asyncio.sleep(1)
-    await pc.close()
+                print("Answer sent. Waiting for file...")
+                break
+
+        await done.wait()
+        await asyncio.sleep(1)
+        await pc.close()
 
 
-asyncio.run(run_receiver())
+asyncio.run(main())
