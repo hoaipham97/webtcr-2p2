@@ -1,2 +1,5 @@
 aiortc
 aioice
+fastapi
+uvicorn
+requests

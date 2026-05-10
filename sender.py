@@ -1,5 +1,8 @@
 import asyncio
 import os
+import time
+import requests
+
 from aiortc import (
     RTCPeerConnection,
     RTCSessionDescription,
@@ -8,37 +11,48 @@ from aiortc import (
     RTCIceServer,
 )
 
+SIGNALING_SERVER = "https://xxx.up.railway.app"
+FILE_TO_SEND = "demo.json"
+
 config = RTCConfiguration(
     iceServers=[RTCIceServer(urls="stun:stun.l.google.com:19302")],
     bundlePolicy=RTCBundlePolicy.MAX_BUNDLE,
 )
 
 
-def read_sdp(prompt):
-    print(prompt)
-    print("Paste SDP, then type END and press Enter:")
+def post_sdp(path, sdp):
+    res = requests.post(
+        f"{SIGNALING_SERVER}{path}",
+        json={"sdp": sdp},
+        timeout=10,
+    )
+    res.raise_for_status()
 
-    lines = []
+
+def wait_sdp(path):
     while True:
-        line = input()
-        if line.strip() == "END":
-            break
-        lines.append(line)
+        res = requests.get(f"{SIGNALING_SERVER}{path}", timeout=10)
+        res.raise_for_status()
 
-    return "\r\n".join(lines) + "\r\n"
+        sdp = res.json().get("sdp")
+        if sdp:
+            return sdp
+
+        print(f"Waiting for {path}...")
+        time.sleep(2)
 
 
 async def main():
     pc = RTCPeerConnection(config)
     channel = pc.createDataChannel("file")
-
-    filename = "demo.json"
     done = asyncio.Event()
 
     async def send_file():
-        channel.send(f"FILENAME:{os.path.basename(filename)}")
+        filename = os.path.basename(FILE_TO_SEND)
 
-        with open(filename, "rb") as f:
+        channel.send(f"FILENAME:{filename}")
+
+        with open(FILE_TO_SEND, "rb") as f:
             while chunk := f.read(16384):
                 channel.send(chunk)
                 await asyncio.sleep(0)
@@ -55,13 +69,14 @@ async def main():
     offer = await pc.createOffer()
     await pc.setLocalDescription(offer)
 
-    print("OFFER:")
-    print(pc.localDescription.sdp)
+    print("Posting OFFER to signaling server...")
+    post_sdp("/offer", pc.localDescription.sdp)
 
-    answer = read_sdp("Paste ANSWER SDP:")
+    print("Waiting for ANSWER...")
+    answer_sdp = wait_sdp("/answer")
 
     await pc.setRemoteDescription(
-        RTCSessionDescription(sdp=answer, type="answer")
+        RTCSessionDescription(sdp=answer_sdp, type="answer")
     )
 
     print("Connected!")
